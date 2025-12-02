@@ -2,6 +2,9 @@ const express = require('express');
 const cors = require('cors');
 const { exec } = require('child_process');
 const { promisify } = require('util');
+const fs = require('fs').promises;
+const path = require('path');
+const crypto = require('crypto');
 require('dotenv').config();
 
 const execAsync = promisify(exec);
@@ -10,10 +13,16 @@ const PORT = process.env.PORT || 3001;
 
 // Middleware
 app.use(express.json());
-app.use(cors({
-  origin: 'http://localhost:3000',
-  credentials: true
-}));
+
+// Logger middleware
+app.use((req, res, next) => {
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+  console.log('Origin:', req.get('origin'));
+  next();
+});
+
+// CORS - Allow all origins for development
+app.use(cors());
 
 // Utility function to validate YouTube URL
 const isValidYouTubeUrl = (url) => {
@@ -50,6 +59,9 @@ app.post('/api/transcript', async (req, res) => {
     });
   }
 
+  const requestId = crypto.randomUUID();
+  const tempFileBase = path.join(__dirname, `temp_${requestId}`);
+
   try {
     // Check if yt-dlp is installed
     try {
@@ -61,40 +73,58 @@ app.post('/api/transcript', async (req, res) => {
       });
     }
 
-    // Extract transcript using yt-dlp
-    // yt-dlp --skip-download --write-auto-sub --sub-lang en --sub-format txt --output "%(title)s" URL
-    const command = `yt-dlp --skip-download --write-subs --write-auto-subs --sub-lang en --sub-format json3 --print "%(title)s" --output "-" "${url}"`;
+    // Helper to find the generated subtitle file
+    const findSubtitleFile = async (basePath) => {
+      const dir = path.dirname(basePath);
+      const baseName = path.basename(basePath);
+      const files = await fs.readdir(dir);
+      // Look for files starting with baseName and ending with .vtt
+      return files.find(f => f.startsWith(baseName) && f.endsWith('.vtt'));
+    };
 
-    // Alternative approach: Get subtitles directly
-    const subtitleCommand = `yt-dlp --skip-download --write-auto-subs --sub-lang en --sub-format vtt --output "temp_%(id)s" "${url}" && cat temp_*.en.vtt 2>/dev/null && rm -f temp_*`;
-
-    let stdout, stderr;
-
-    try {
-      const result = await execAsync(subtitleCommand, {
+    // Helper to run yt-dlp
+    const runYtDlp = async (command) => {
+      return execAsync(command, {
         maxBuffer: 1024 * 1024 * 10, // 10MB buffer
         timeout: 30000 // 30 seconds timeout
       });
-      stdout = result.stdout;
-      stderr = result.stderr;
-    } catch (execError) {
-      // If auto-subs fail, try manual subs
-      const manualSubCommand = `yt-dlp --skip-download --write-subs --sub-lang en --sub-format vtt --output "temp_%(id)s" "${url}" && cat temp_*.en.vtt 2>/dev/null && rm -f temp_*`;
+    };
 
-      try {
-        const result = await execAsync(manualSubCommand, {
-          maxBuffer: 1024 * 1024 * 10,
-          timeout: 30000
-        });
-        stdout = result.stdout;
-        stderr = result.stderr;
-      } catch (manualError) {
-        return res.status(404).json({
-          error: 'Transcript Not Found',
-          message: 'No transcript available for this video. The video may not have captions or subtitles.',
-          details: execError.message
-        });
+    let vttContent = null;
+
+    // Try auto-subs first
+    // Note: we use --quiet to suppress output, and --output to specify filename prefix
+    const autoSubCommand = `yt-dlp --quiet --skip-download --write-auto-subs --sub-lang en --sub-format vtt --output "${tempFileBase}" "${url}"`;
+    
+    try {
+      await runYtDlp(autoSubCommand);
+      const filename = await findSubtitleFile(tempFileBase);
+      if (filename) {
+        vttContent = await fs.readFile(path.join(__dirname, filename), 'utf-8');
       }
+    } catch (e) {
+      // Ignore and try manual
+    }
+
+    // If no auto-subs, try manual subs
+    if (!vttContent) {
+      const manualSubCommand = `yt-dlp --quiet --skip-download --write-subs --sub-lang en --sub-format vtt --output "${tempFileBase}" "${url}"`;
+      try {
+        await runYtDlp(manualSubCommand);
+        const filename = await findSubtitleFile(tempFileBase);
+        if (filename) {
+          vttContent = await fs.readFile(path.join(__dirname, filename), 'utf-8');
+        }
+      } catch (e) {
+        // Ignore
+      }
+    }
+
+    if (!vttContent) {
+      return res.status(404).json({
+        error: 'Transcript Not Found',
+        message: 'No transcript available for this video. The video may not have captions or subtitles.'
+      });
     }
 
     // Clean VTT format to plain text
@@ -127,14 +157,7 @@ app.post('/api/transcript', async (req, res) => {
       return transcriptLines.join(' ');
     };
 
-    const transcript = cleanTranscript(stdout);
-
-    if (!transcript) {
-      return res.status(404).json({
-        error: 'Transcript Not Found',
-        message: 'Unable to extract transcript from this video'
-      });
-    }
+    const transcript = cleanTranscript(vttContent);
 
     res.status(200).json({
       success: true,
@@ -158,6 +181,18 @@ app.post('/api/transcript', async (req, res) => {
       message: 'Failed to extract transcript',
       details: error.message
     });
+  } finally {
+    // Cleanup files
+    try {
+      const dir = __dirname;
+      const files = await fs.readdir(dir);
+      const tempFiles = files.filter(f => f.startsWith(`temp_${requestId}`));
+      for (const file of tempFiles) {
+        await fs.unlink(path.join(dir, file));
+      }
+    } catch (cleanupError) {
+      console.error('Error cleaning up temp files:', cleanupError);
+    }
   }
 });
 
