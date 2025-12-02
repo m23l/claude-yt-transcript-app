@@ -18,6 +18,7 @@ Before running this application, ensure you have the following installed:
 - **Node.js** (v14 or higher)
 - **npm** (comes with Node.js)
 - **yt-dlp** (YouTube video downloader)
+- **Internet access** to YouTube (direct or via proxy that allows youtube.com)
 
 ### Installing yt-dlp
 
@@ -240,6 +241,19 @@ If port 3001 is already in use:
 
 1. Change the PORT in your `.env` file
 2. Or set it when starting: `PORT=3002 npm start`
+
+### Network and proxy issues
+
+This API requires direct internet access to YouTube. If you're in a restricted environment:
+
+1. **Proxy environments**: The server attempts to bypass proxies by unsetting proxy environment variables. If you're behind a corporate proxy that allows YouTube access, you may need to configure yt-dlp to use your proxy settings.
+
+2. **Containerized environments**: Some container environments (like Docker or cloud sandboxes) may have network restrictions. Ensure YouTube (youtube.com and googlevideo.com) is accessible from your environment.
+
+3. **Testing**: To verify yt-dlp can access YouTube, run:
+   ```bash
+   yt-dlp --list-formats "https://www.youtube.com/watch?v=jNQXAC9IVRw"
+   ```
 
 ## License
 

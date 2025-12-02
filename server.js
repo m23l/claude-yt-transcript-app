@@ -66,7 +66,8 @@ app.post('/api/transcript', async (req, res) => {
     const command = `yt-dlp --skip-download --write-subs --write-auto-subs --sub-lang en --sub-format json3 --print "%(title)s" --output "-" "${url}"`;
 
     // Alternative approach: Get subtitles directly
-    const subtitleCommand = `yt-dlp --skip-download --write-auto-subs --sub-lang en --sub-format vtt --output "temp_%(id)s" "${url}" && cat temp_*.en.vtt 2>/dev/null && rm -f temp_*`;
+    // Note: Unset proxy variables to avoid proxy issues with YouTube access
+    const subtitleCommand = `http_proxy= https_proxy= HTTP_PROXY= HTTPS_PROXY= GLOBAL_AGENT_HTTP_PROXY= GLOBAL_AGENT_NO_PROXY= yt-dlp --skip-download --write-auto-subs --sub-lang en --sub-format vtt --output "temp_%(id)s" "${url}" && cat temp_*.en.vtt 2>/dev/null && rm -f temp_*`;
 
     let stdout, stderr;
 
@@ -79,7 +80,7 @@ app.post('/api/transcript', async (req, res) => {
       stderr = result.stderr;
     } catch (execError) {
       // If auto-subs fail, try manual subs
-      const manualSubCommand = `yt-dlp --skip-download --write-subs --sub-lang en --sub-format vtt --output "temp_%(id)s" "${url}" && cat temp_*.en.vtt 2>/dev/null && rm -f temp_*`;
+      const manualSubCommand = `http_proxy= https_proxy= HTTP_PROXY= HTTPS_PROXY= GLOBAL_AGENT_HTTP_PROXY= GLOBAL_AGENT_NO_PROXY= yt-dlp --skip-download --write-subs --sub-lang en --sub-format vtt --output "temp_%(id)s" "${url}" && cat temp_*.en.vtt 2>/dev/null && rm -f temp_*`;
 
       try {
         const result = await execAsync(manualSubCommand, {
