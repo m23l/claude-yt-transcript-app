@@ -21,8 +21,36 @@ app.use((req, res, next) => {
   next();
 });
 
-// CORS - Allow all origins for development
-app.use(cors());
+// CORS - Configure allowed origins
+const allowedOrigins = [
+  'https://claude.site',
+  'https://claude.ai',
+  'http://localhost:3000', // Local development
+  'http://localhost:5173'  // Vite default
+];
+
+app.use(cors({
+  origin: (origin, callback) => {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    
+    // Check if origin is in allowed list
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+
+    // Check for wildcards (e.g. https://*.claude.site)
+    if (origin.endsWith('.claude.site') && origin.startsWith('https://')) {
+      return callback(null, true);
+    }
+
+    console.log('Blocked by CORS:', origin);
+    return callback(new Error('Not allowed by CORS'));
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
 
 // Utility function to validate YouTube URL
 const isValidYouTubeUrl = (url) => {
